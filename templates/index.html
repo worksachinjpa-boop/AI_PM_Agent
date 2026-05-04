@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html><head><title>AI Product Manager</title>
+<style>
+body{font-family:sans-serif;background:#0f0f0f;color:#e0e0e0;margin:0}
+.header{background:#1a1a2e;padding:24px 40px}
+.header h1{color:#7c6fcd;font-size:24px;margin:0}
+.header p{color:#888;font-size:14px;margin:4px 0 0}
+.container{max-width:900px;margin:40px auto;padding:0 20px}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:28px;margin-bottom:20px}
+textarea{width:100%;background:#0f0f0f;border:1px solid #333;border-radius:8px;padding:14px;color:#e0e0e0;font-size:15px;min-height:100px;font-family:inherit;outline:none;resize:vertical;box-sizing:border-box}
+button{margin-top:16px;background:#7c6fcd;color:white;border:none;padding:12px 28px;border-radius:8px;font-size:15px;cursor:pointer}
+button:disabled{background:#444;cursor:not-allowed}
+.agent{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:20px;margin-bottom:16px}
+.agent.running{border-color:#7c6fcd}
+.agent.done{border-color:#2a5a3a}
+.atitle{font-weight:600;font-size:15px;margin-bottom:6px}
+.astatus{font-size:12px;color:#888}
+.astatus.running{color:#7c6fcd}
+.astatus.done{color:#4caf7d}
+.result{font-size:14px;color:#ccc;line-height:1.7;white-space:pre-wrap;background:#0f0f0f;padding:14px;border-radius:8px;margin-top:12px;max-height:300px;overflow-y:auto}
+</style></head>
+<body>
+<div class="header">
+<h1>AI Product Manager</h1>
+<p>4 agents analyse your idea in real time</p>
+</div>
+<div class="container">
+<div class="card">
+<label style="color:#888;font-size:14px;display:block;margin-bottom:10px">Your rough idea</label>
+<textarea id="idea" placeholder="e.g. I want to build something that helps restaurant owners decide their menu..."></textarea>
+<button id="btn" onclick="run()">Analyse with AI Agents</button> <a href="/history" style="margin-left:16px;color:#7c6fcd;font-size:14px;text-decoration:none">View History</a>
+</div>
+<div id="a1" class="agent"><div class="atitle">1. Idea Refiner</div><div class="astatus" id="s1">Waiting</div></div>
+<div id="a2" class="agent"><div class="atitle">2. Market Researcher</div><div class="astatus" id="s2">Waiting</div></div>
+<div id="a3" class="agent"><div class="atitle">3. User Identifier</div><div class="astatus" id="s3">Waiting</div></div>
+<div id="a4" class="agent"><div class="atitle">4. Validator</div><div class="astatus" id="s4">Waiting</div></div>
+</div>
+<script>
+var map = {idea_refiner:["a1","s1"],market_researcher:["a2","s2"],user_identifier:["a3","s3"],validator:["a4","s4"]};
+async function run() {
+  var idea = document.getElementById("idea").value.trim();
+  if (!idea) { alert("Please enter your idea"); return; }
+  var btn = document.getElementById("btn");
+  btn.disabled = true; btn.textContent = "Agents running...";
+  for (var k in map) {
+    var a=map[k][0],s=map[k][1];
+    document.getElementById(a).className="agent";
+    document.getElementById(s).textContent="Waiting";
+    document.getElementById(s).className="astatus";
+    var r=document.getElementById("r"+a);
+    if(r) r.remove();
+  }
+  var res = await fetch("/analyse", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({idea:idea})});
+  var reader = res.body.getReader();
+  var dec = new TextDecoder();
+  while(true) {
+    var x = await reader.read();
+    if(x.done) break;
+    var lines = dec.decode(x.value).split("\n").filter(function(l){return l.indexOf("data: ")==0;});
+    for(var i=0;i<lines.length;i++) {
+      try {
+        var d = JSON.parse(lines[i].slice(6));
+        if(d.agent=="complete"){btn.disabled=false;btn.textContent="Analyse with AI Agents";if(d.id){var link=document.createElement("a");link.href="/result/"+d.id;link.textContent="View saved result: /result/"+d.id;link.style="display:block;margin-top:16px;color:#7c6fcd;font-size:14px";document.querySelector(".card").appendChild(link);}continue;}
+        if(d.agent=="error"){btn.disabled=false;btn.textContent="Analyse with AI Agents";alert(d.message);continue;}
+        var am=map[d.agent];
+        if(!am) continue;
+        var a=am[0],s=am[1];
+        if(d.status=="running"){
+          document.getElementById(a).className="agent running";
+          document.getElementById(s).className="astatus running";
+          document.getElementById(s).textContent=d.message;
+        }
+        if(d.status=="done"&&d.result){
+          document.getElementById(a).className="agent done";
+          document.getElementById(s).className="astatus done";
+          document.getElementById(s).textContent="Complete";
+          var div=document.createElement("div");
+          div.className="result";div.id="r"+a;
+          div.textContent=d.result;
+          document.getElementById(a).appendChild(div);
+        }
+      } catch(e){}
+    }
+  }
+}
+</script>
+</body></html>
