@@ -87,3 +87,40 @@ def get_all_analyses():
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+def save_user_research(analysis_id, interview_script, feedback_synthesis, personas):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_research (
+            id TEXT PRIMARY KEY,
+            analysis_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            interview_script TEXT,
+            feedback_synthesis TEXT,
+            personas TEXT
+        )
+    """)
+    research_id = str(uuid.uuid4())[:8]
+    cursor.execute("""
+        INSERT INTO user_research (id, analysis_id, interview_script, feedback_synthesis, personas)
+        VALUES (?, ?, ?, ?, ?)
+    """, (research_id, analysis_id, interview_script, feedback_synthesis, personas))
+    conn.commit()
+    conn.close()
+    return research_id
+
+def get_user_research(analysis_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM user_research WHERE analysis_id = ? ORDER BY created_at DESC LIMIT 1", (analysis_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+    except:
+        conn.close()
+    return None
