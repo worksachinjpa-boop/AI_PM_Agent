@@ -1,0 +1,21 @@
+version: "3.8"
+services:
+  api:
+    build: .
+    ports:
+      - "8001:8000"
+    environment:
+      - DATABASE_URL=postgresql://mooduser:moodpass@db:5432/mooddb
+      - SECRET_KEY=your-super-secret-key-change-this
+    depends_on:
+      - db
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=mooduser
+      - POSTGRES_PASSWORD=moodpass
+      - POSTGRES_DB=mooddb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+volumes:
+  postgres_data:
