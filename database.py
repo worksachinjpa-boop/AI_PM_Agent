@@ -124,3 +124,74 @@ def get_user_research(analysis_id):
     except:
         conn.close()
     return None
+
+def save_backlog(analysis_id, backlog, sprint_plan):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS backlogs (
+            id TEXT PRIMARY KEY,
+            analysis_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            backlog TEXT,
+            sprint_plan TEXT
+        )
+    """)
+    backlog_id = str(uuid.uuid4())[:8]
+    cursor.execute("""
+        INSERT INTO backlogs (id, analysis_id, backlog, sprint_plan)
+        VALUES (?, ?, ?, ?)
+    """, (backlog_id, analysis_id, backlog, sprint_plan))
+    conn.commit()
+    conn.close()
+    return backlog_id
+
+def get_backlog(analysis_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM backlogs WHERE analysis_id = ? ORDER BY created_at DESC LIMIT 1", (analysis_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+    except:
+        conn.close()
+    return None
+
+def save_specs(analysis_id, design_brief, backend_spec, frontend_spec):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS specs (
+            id TEXT PRIMARY KEY,
+            analysis_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            design_brief TEXT,
+            backend_spec TEXT,
+            frontend_spec TEXT
+        )
+    """)
+    spec_id = str(uuid.uuid4())[:8]
+    cursor.execute("""
+        INSERT INTO specs (id, analysis_id, design_brief, backend_spec, frontend_spec)
+        VALUES (?, ?, ?, ?, ?)
+    """, (spec_id, analysis_id, design_brief, backend_spec, frontend_spec))
+    conn.commit()
+    conn.close()
+    return spec_id
+
+def get_specs(analysis_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM specs WHERE analysis_id = ? ORDER BY created_at DESC LIMIT 1", (analysis_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+    except:
+        conn.close()
+    return None
