@@ -195,3 +195,39 @@ def get_specs(analysis_id):
     except:
         conn.close()
     return None
+
+def save_architecture(analysis_id, architecture, qa_plan, devops_plan):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS architecture (
+            id TEXT PRIMARY KEY,
+            analysis_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            architecture TEXT,
+            qa_plan TEXT,
+            devops_plan TEXT
+        )
+    """)
+    arch_id = str(uuid.uuid4())[:8]
+    cursor.execute("""
+        INSERT INTO architecture (id, analysis_id, architecture, qa_plan, devops_plan)
+        VALUES (?, ?, ?, ?, ?)
+    """, (arch_id, analysis_id, architecture, qa_plan, devops_plan))
+    conn.commit()
+    conn.close()
+    return arch_id
+
+def get_architecture(analysis_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM architecture WHERE analysis_id = ? ORDER BY created_at DESC LIMIT 1", (analysis_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+    except:
+        conn.close()
+    return None

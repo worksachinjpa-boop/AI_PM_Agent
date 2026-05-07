@@ -129,6 +129,7 @@ async def result(analysis_id: str, session: str = Cookie(default=None)):
     html += "<a href=\"/prd/" + analysis_id + "\" class=\"btn btn-green\">Generate PRD</a>"
     html += "<a href=\"/backlog/" + analysis_id + "\" style=\"background:#1a3a5a;color:#4a9eff;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block\">Create Backlog</a>"
     html += "<a href=\"/specs/" + analysis_id + "\" style=\"background:#3a1a5a;color:#aa4aff;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block\">Run Parallel Specs</a>"
+    html += "<a href=\"/architecture/" + analysis_id + "\" style=\"background:#1a3a2a;color:#4aff9f;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block\">System Architecture</a>"
     html += "</div></div></div></body></html>"
     return HTMLResponse(content=html)
 
@@ -603,6 +604,120 @@ async def generate_specs(analysis_id: str, session: str = Cookie(default=None)):
             from database import save_specs
             save_specs(analysis_id, design, backend, frontend)
             yield event("complete", "done", message="All specs complete!")
+        except Exception as e:
+            yield event("error", "error", message=str(e))
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.get("/architecture/{analysis_id}", response_class=HTMLResponse)
+async def architecture_page(analysis_id: str, session: str = Cookie(default=None)):
+    if not is_authenticated(session):
+        return RedirectResponse(url="/login", status_code=302)
+    analysis = get_analysis(analysis_id)
+    if not analysis:
+        return HTMLResponse(content="<h1>Not found</h1>", status_code=404)
+    from database import get_architecture
+    existing = get_architecture(analysis_id)
+    arch = existing["architecture"] if existing else ""
+    qa = existing["qa_plan"] if existing else ""
+    devops = existing["devops_plan"] if existing else ""
+    html = "<!DOCTYPE html><html><head><title>Architecture</title>" + base_style() + "</head>"
+    html += "<body><div class=\"header\"><h1>System Architecture</h1><a href=\"/logout\" style=\"color:#888;font-size:13px\">Logout</a></div>"
+    html += "<div class=\"container\"><a class=\"link\" href=\"/result/" + analysis_id + "\">&larr; Back</a><div style=\"margin-top:24px\">"
+    html += "<div style=\"background:#1a2a3a;border:1px solid #2a3a5a;border-radius:10px;padding:16px;margin-bottom:20px\">"
+    html += "<p style=\"color:#4a9eff;font-size:14px;margin:0\">Architect runs first. QA + DevOps run in parallel after.</p></div>"
+    html += "<button class=\"btn\" id=\"genbtn\" onclick=\"generateArchitecture('" + analysis_id + "')\">Run Architecture Agents</button>"
+    html += "<div id=\"agents\">"
+    html += "<div class=\"agent\" id=\"card-architect\"><div class=\"atitle\">1. Solutions Architect</div><div class=\"astatus\" id=\"status-architect\">Waiting</div></div>"
+    html += "<div style=\"display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px\">"
+    html += "<div class=\"agent\" id=\"card-qa\"><div class=\"atitle\">2. QA Engineer</div><div style=\"font-size:11px;color:#ffaa44\">Runs in parallel</div><div class=\"astatus\" id=\"status-qa\">Waiting</div></div>"
+    html += "<div class=\"agent\" id=\"card-devops\"><div class=\"atitle\">3. DevOps Engineer</div><div style=\"font-size:11px;color:#ffaa44\">Runs in parallel</div><div class=\"astatus\" id=\"status-devops\">Waiting</div></div>"
+    html += "</div></div>"
+    html += "<div class=\"card\"><h2>System Architecture</h2><p id=\"arch-content\">" + arch + "</p></div>"
+    html += "<div style=\"display:grid;grid-template-columns:1fr 1fr;gap:16px\">"
+    html += "<div class=\"card\"><h2>QA Test Plan</h2><p id=\"qa-content\">" + qa + "</p></div>"
+    html += "<div class=\"card\"><h2>DevOps Setup</h2><p id=\"devops-content\">" + devops + "</p></div>"
+    html += "</div></div></div>"
+    html += """<script>
+async function generateArchitecture(id) {
+    const btn = document.getElementById("genbtn");
+    btn.disabled = true; btn.textContent = "Running agents...";
+    ["architect","qa","devops"].forEach(a => {
+        document.getElementById("card-"+a).className = "agent";
+        document.getElementById("status-"+a).textContent = "Waiting";
+        document.getElementById("status-"+a).className = "astatus";
+    });
+    const res = await fetch("/generate-architecture/"+id, {method:"POST"});
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    while(true) {
+        const {done, value} = await reader.read();
+        if(done) break;
+        const lines = dec.decode(value).split("\n").filter(l => l.startsWith("data: "));
+        for(const line of lines) {
+            try {
+                const d = JSON.parse(line.slice(6));
+                if(d.agent === "complete") { btn.disabled=false; btn.textContent="Re-run Agents"; continue; }
+                if(d.agent === "error") { btn.disabled=false; btn.textContent="Run Architecture Agents"; alert(d.message); continue; }
+                const card = document.getElementById("card-"+d.agent);
+                const status = document.getElementById("status-"+d.agent);
+                if(d.status === "running") { card.className="agent running"; status.className="astatus running"; status.textContent=d.message; }
+                if(d.status === "done" && d.result) {
+                    card.className="agent done"; status.className="astatus done"; status.textContent="Complete";
+                    if(d.agent === "architect") document.getElementById("arch-content").textContent = d.result;
+                    if(d.agent === "qa") document.getElementById("qa-content").textContent = d.result;
+                    if(d.agent === "devops") document.getElementById("devops-content").textContent = d.result;
+                }
+            } catch(e) {}
+        }
+    }
+}
+</script></body></html>"""
+    return HTMLResponse(content=html)
+
+@app.post("/generate-architecture/{analysis_id}")
+async def generate_architecture(analysis_id: str, session: str = Cookie(default=None)):
+    if not is_authenticated(session):
+        async def deny():
+            yield event("error", "error", message="Not authenticated.")
+        return StreamingResponse(deny(), media_type="text/event-stream")
+    analysis = get_analysis(analysis_id)
+    if not analysis:
+        async def not_found():
+            yield event("error", "error", message="Analysis not found.")
+        return StreamingResponse(not_found(), media_type="text/event-stream")
+    from database import get_specs, get_prd, get_backlog
+    specs = get_specs(analysis_id) or {}
+    prd_data = get_prd(analysis_id) or {}
+    backlog_data = get_backlog(analysis_id) or {}
+    prd_text = prd_data.get("prd", str(analysis.get("refined_problem","")))
+    backlog_text = backlog_data.get("backlog", "")
+
+    async def generate():
+        try:
+            yield event("architect", "running", message="Designing system architecture...")
+            from agents.architect_agent import run_architect_agent
+            architecture = await asyncio.to_thread(run_architect_agent, specs)
+            yield event("architect", "done", result=architecture)
+
+            yield event("qa", "running", message="Writing QA test plan...")
+            yield event("devops", "running", message="Setting up DevOps pipeline...")
+
+            from agents.qa_agent import run_qa_agent
+            from agents.devops_agent import run_devops_agent
+
+            qa_plan, devops_plan = await asyncio.gather(
+                asyncio.to_thread(run_qa_agent, prd_text, backlog_text),
+                asyncio.to_thread(run_devops_agent, architecture)
+            )
+
+            yield event("qa", "done", result=qa_plan)
+            yield event("devops", "done", result=devops_plan)
+
+            from database import save_architecture
+            save_architecture(analysis_id, architecture, qa_plan, devops_plan)
+            yield event("complete", "done", message="Architecture complete!")
         except Exception as e:
             yield event("error", "error", message=str(e))
 
