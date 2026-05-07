@@ -231,3 +231,43 @@ def get_architecture(analysis_id):
     except:
         conn.close()
     return None
+
+def save_generated_app(analysis_id, app_name, app_dir, status, files_generated, errors):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS generated_apps (
+            id TEXT PRIMARY KEY,
+            analysis_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            app_name TEXT,
+            app_dir TEXT,
+            status TEXT,
+            files_generated TEXT,
+            errors TEXT
+        )
+    """)
+    import json
+    app_id = str(uuid.uuid4())[:8]
+    cursor.execute("""
+        INSERT INTO generated_apps (id, analysis_id, app_name, app_dir, status, files_generated, errors)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (app_id, analysis_id, app_name, app_dir, status, 
+          json.dumps(files_generated), json.dumps(errors)))
+    conn.commit()
+    conn.close()
+    return app_id
+
+def get_generated_app(analysis_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM generated_apps WHERE analysis_id = ? ORDER BY created_at DESC LIMIT 1", (analysis_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+    except:
+        conn.close()
+    return None

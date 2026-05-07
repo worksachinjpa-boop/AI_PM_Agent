@@ -130,6 +130,7 @@ async def result(analysis_id: str, session: str = Cookie(default=None)):
     html += "<a href=\"/backlog/" + analysis_id + "\" style=\"background:#1a3a5a;color:#4a9eff;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block\">Create Backlog</a>"
     html += "<a href=\"/specs/" + analysis_id + "\" style=\"background:#3a1a5a;color:#aa4aff;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block\">Run Parallel Specs</a>"
     html += "<a href=\"/architecture/" + analysis_id + "\" style=\"background:#1a3a2a;color:#4aff9f;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block\">System Architecture</a>"
+    html += "<a href=\"/codegen/" + analysis_id + "\" style=\"background:#0a2a1a;color:#00ff88;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block;border:1px solid #00ff88\">Generate Code</a>"
     html += "</div></div></div></body></html>"
     return HTMLResponse(content=html)
 
@@ -718,6 +719,145 @@ async def generate_architecture(analysis_id: str, session: str = Cookie(default=
             from database import save_architecture
             save_architecture(analysis_id, architecture, qa_plan, devops_plan)
             yield event("complete", "done", message="Architecture complete!")
+        except Exception as e:
+            yield event("error", "error", message=str(e))
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.get("/codegen/{analysis_id}", response_class=HTMLResponse)
+async def codegen_page(analysis_id: str, session: str = Cookie(default=None)):
+    if not is_authenticated(session):
+        return RedirectResponse(url="/login", status_code=302)
+    analysis = get_analysis(analysis_id)
+    if not analysis:
+        return HTMLResponse(content="<h1>Not found</h1>", status_code=404)
+    from database import get_generated_app
+    existing = get_generated_app(analysis_id)
+    status = existing["status"] if existing else ""
+    files = existing["files_generated"] if existing else "[]"
+    errors = existing["errors"] if existing else "[]"
+    app_dir = existing["app_dir"] if existing else ""
+    app_name = existing["app_name"] if existing else ""
+    html = "<!DOCTYPE html><html><head><title>Code Generator</title>" + base_style() + "</head>"
+    html += "<body><div class=\"header\"><h1>Code Generator</h1><a href=\"/logout\" style=\"color:#888;font-size:13px\">Logout</a></div>"
+    html += "<div class=\"container\"><a class=\"link\" href=\"/architecture/" + analysis_id + "\">&larr; Back to Architecture</a><div style=\"margin-top:24px\">"
+    html += "<div style=\"background:#1a2a1a;border:1px solid #2a4a2a;border-radius:10px;padding:16px;margin-bottom:20px\">"
+    html += "<p style=\"color:#4aff9f;font-size:14px;margin:0\">Code Generator writes backend code → Executor checks for errors → Fixer corrects mistakes automatically.</p></div>"
+    if existing and status == "success":
+        html += "<div style=\"background:#1a3a2a;border:1px solid #2a5a3a;border-radius:10px;padding:16px;margin-bottom:20px\">"
+        html += "<p style=\"color:#4caf7d;font-size:14px;margin:0\">App generated at: <code>" + app_dir + "</code></p></div>"
+    html += "<div style=\"margin-bottom:16px\">"
+    html += "<label style=\"color:#888;font-size:13px;display:block;margin-bottom:6px\">App name (no spaces)</label>"
+    html += "<input id=\"appname\" type=\"text\" value=\"" + app_name + "\" placeholder=\"my-mood-tracker\" style=\"background:#0f0f0f;border:1px solid #333;border-radius:8px;padding:10px 14px;color:#e0e0e0;font-size:14px;width:300px;outline:none\"/>"
+    html += "</div>"
+    html += "<button class=\"btn\" id=\"genbtn\" onclick=\"generateCode('" + analysis_id + "')\">Generate Code</button>"
+    html += "<div id=\"agents\" style=\"margin-top:20px\">"
+    html += "<div class=\"agent\" id=\"card-writer\"><div class=\"atitle\">1. Code Writer</div><div class=\"astatus\" id=\"status-writer\">Waiting</div></div>"
+    html += "<div class=\"agent\" id=\"card-executor\"><div class=\"atitle\">2. Code Executor</div><div class=\"astatus\" id=\"status-executor\">Waiting</div></div>"
+    html += "<div class=\"agent\" id=\"card-fixer\"><div class=\"atitle\">3. Code Fixer</div><div class=\"astatus\" id=\"status-fixer\">Runs only if errors found</div></div>"
+    html += "</div>"
+    html += "<div class=\"card\" id=\"output-card\" style=\"margin-top:20px\">"
+    html += "<h2>Generated Files</h2>"
+    html += "<div id=\"files-list\"></div>"
+    html += "<pre id=\"code-output\" style=\"background:#0a0a0a;padding:16px;border-radius:8px;overflow-x:auto;font-size:12px;color:#4aff9f;margin-top:12px;max-height:500px;overflow-y:auto\"></pre>"
+    html += "</div>"
+    html += "</div></div>"
+    html += """<script>
+async function generateCode(id) {
+    const btn = document.getElementById("genbtn");
+    const appname = document.getElementById("appname").value.trim();
+    if(!appname) { alert("Please enter an app name"); return; }
+    btn.disabled = true; btn.textContent = "Generating...";
+    ["writer","executor","fixer"].forEach(a => {
+        document.getElementById("card-"+a).className = "agent";
+        document.getElementById("status-"+a).textContent = "Waiting";
+        document.getElementById("status-"+a).className = "astatus";
+    });
+    document.getElementById("code-output").textContent = "";
+    document.getElementById("files-list").innerHTML = "";
+    const res = await fetch("/generate-code/"+id+"?app_name="+encodeURIComponent(appname), {method:"POST"});
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    while(true) {
+        const {done, value} = await reader.read();
+        if(done) break;
+        const lines = dec.decode(value).split("\n").filter(l => l.startsWith("data: "));
+        for(const line of lines) {
+            try {
+                const d = JSON.parse(line.slice(6));
+                if(d.agent === "complete") {
+                    btn.disabled=false; btn.textContent="Regenerate Code";
+                    if(d.files) {
+                        const list = document.getElementById("files-list");
+                        list.innerHTML = "<p style=\"color:#4caf7d;font-size:13px;margin-bottom:8px\">Generated " + d.files.length + " files:</p>";
+                        d.files.forEach(f => {
+                            list.innerHTML += "<span style=\"background:#1a3a2a;color:#4aff9f;padding:3px 8px;border-radius:4px;font-size:12px;margin:2px;display:inline-block\">" + f + "</span>";
+                        });
+                    }
+                    continue;
+                }
+                if(d.agent === "error") { btn.disabled=false; btn.textContent="Generate Code"; alert(d.message); continue; }
+                const card = document.getElementById("card-"+d.agent);
+                const status = document.getElementById("status-"+d.agent);
+                if(d.status === "running") { card.className="agent running"; status.className="astatus running"; status.textContent=d.message; }
+                if(d.status === "done") {
+                    card.className="agent done"; status.className="astatus done"; status.textContent=d.message||"Complete";
+                    if(d.preview) document.getElementById("code-output").textContent = d.preview;
+                }
+            } catch(e) {}
+        }
+    }
+}
+</script></body></html>"""
+    return HTMLResponse(content=html)
+
+@app.post("/generate-code/{analysis_id}")
+async def generate_code(analysis_id: str, app_name: str, session: str = Cookie(default=None)):
+    if not is_authenticated(session):
+        async def deny():
+            yield event("error", "error", message="Not authenticated.")
+        return StreamingResponse(deny(), media_type="text/event-stream")
+    analysis = get_analysis(analysis_id)
+    if not analysis:
+        async def not_found():
+            yield event("error", "error", message="Analysis not found.")
+        return StreamingResponse(not_found(), media_type="text/event-stream")
+    from database import get_architecture
+    arch_data = get_architecture(analysis_id) or {}
+    backend_spec = arch_data.get("architecture", str(analysis.get("refined_problem","")))
+
+    async def generate():
+        try:
+            yield event("writer", "running", message="Writing backend code...")
+            from agents.code_generator import run_code_generator, parse_generated_files, save_generated_files
+            raw_code = await asyncio.to_thread(run_code_generator, backend_spec, app_name)
+            files = parse_generated_files(raw_code)
+            app_dir = save_generated_files(files, app_name)
+            preview = "\n".join([f"# {k}\n{v[:200]}..." for k,v in list(files.items())[:3]])
+            yield event("writer", "done", message=f"Generated {len(files)} files", preview=preview)
+
+            yield event("executor", "running", message="Checking code for errors...")
+            from agents.code_executor import run_code_executor
+            results = await asyncio.to_thread(run_code_executor, app_dir)
+
+            if results["success"]:
+                yield event("executor", "done", message=f"All {len(results['files_checked'])} files pass syntax check")
+                yield event("fixer", "done", message="No fixes needed")
+                from database import save_generated_app
+                save_generated_app(analysis_id, app_name, app_dir, "success", list(files.keys()), [])
+                yield event("complete", "done", files=list(files.keys()), message="Code generated successfully!")
+            else:
+                yield event("executor", "done", message=f"{len(results['errors'])} errors found — fixing...")
+                yield event("fixer", "running", message=f"Fixing {len(results['errors'])} errors...")
+                from agents.code_fixer import run_code_fixer
+                fixed = await asyncio.to_thread(run_code_fixer, app_dir, results["errors"])
+                yield event("fixer", "done", message=f"Fixed {len(fixed)} files")
+                from database import save_generated_app
+                all_files = list(files.keys())
+                save_generated_app(analysis_id, app_name, app_dir, "fixed", all_files, results["errors"])
+                yield event("complete", "done", files=all_files, message="Code generated and fixed!")
+
         except Exception as e:
             yield event("error", "error", message=str(e))
 
