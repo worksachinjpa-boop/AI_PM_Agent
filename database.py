@@ -348,3 +348,80 @@ def get_frontend_code(analysis_id):
     except:
         conn.close()
     return None
+
+def save_migration(analysis_id, app_name, migration_dir, status, steps, errors):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS migrations (
+            id TEXT PRIMARY KEY,
+            analysis_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            app_name TEXT,
+            migration_dir TEXT,
+            status TEXT,
+            steps TEXT,
+            errors TEXT
+        )
+    """)
+    import json
+    mig_id = str(uuid.uuid4())[:8]
+    cursor.execute("""
+        INSERT INTO migrations (id, analysis_id, app_name, migration_dir, status, steps, errors)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (mig_id, analysis_id, app_name, migration_dir, status,
+          json.dumps(steps), json.dumps(errors)))
+    conn.commit()
+    conn.close()
+    return mig_id
+
+def get_migration(analysis_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM migrations WHERE analysis_id = ? ORDER BY created_at DESC LIMIT 1", (analysis_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+    except:
+        conn.close()
+    return None
+
+def save_test_results(analysis_id, app_name, passed, failed, output):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS test_results (
+            id TEXT PRIMARY KEY,
+            analysis_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            app_name TEXT,
+            passed INTEGER,
+            failed INTEGER,
+            output TEXT
+        )
+    """)
+    test_id = str(uuid.uuid4())[:8]
+    cursor.execute("""
+        INSERT INTO test_results (id, analysis_id, app_name, passed, failed, output)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (test_id, analysis_id, app_name, passed, failed, output))
+    conn.commit()
+    conn.close()
+    return test_id
+
+def get_test_results(analysis_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM test_results WHERE analysis_id = ? ORDER BY created_at DESC LIMIT 1", (analysis_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+    except:
+        conn.close()
+    return None

@@ -133,6 +133,8 @@ async def result(analysis_id: str, session: str = Cookie(default=None)):
     html += "<a href=\"/codegen/" + analysis_id + "\" style=\"background:#0a2a1a;color:#00ff88;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block;border:1px solid #00ff88\">Generate Code</a>"
     html += "<a href=\"/deploy/" + analysis_id + "\" style=\"background:#2a0a0a;color:#ff4444;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block;border:1px solid #ff4444\">Deploy to Production</a>"
     html += "<a href=\"/frontend-codegen/" + analysis_id + "\" style=\"background:#0a1a3a;color:#4a9eff;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block;border:1px solid #4a9eff\">Generate Frontend</a>"
+    html += "<a href=\"/migration/" + analysis_id + "\" style=\"background:#1a0a2a;color:#aa44ff;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block;border:1px solid #aa44ff\">DB Migration</a>"
+    html += "<a href=\"/tests/" + analysis_id + "\" style=\"background:#2a1a0a;color:#ffaa44;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block;border:1px solid #ffaa44\">Run Tests</a>"
     html += "</div></div></div></body></html>"
     return HTMLResponse(content=html)
 
@@ -1060,6 +1062,120 @@ async def preview_app(analysis_id: str, session: str = Cookie(default=None)):
         return HTMLResponse(content="<h1>Frontend file not found</h1>", status_code=404)
     with open(index_path, "r") as f:
         return HTMLResponse(content=f.read())
+
+
+@app.get("/migration/{analysis_id}", response_class=HTMLResponse)
+async def migration_page(analysis_id: str, session: str = Cookie(default=None)):
+    if not is_authenticated(session):
+        return RedirectResponse(url="/login", status_code=302)
+    analysis = get_analysis(analysis_id)
+    if not analysis:
+        return HTMLResponse(content="<h1>Not found</h1>", status_code=404)
+    from database import get_migration
+    existing = get_migration(analysis_id)
+    success_banner = ""
+    migration_log = ""
+    if existing:
+        import json
+        steps = json.loads(existing["steps"])
+        migration_log = "\n".join(steps)
+        success_banner = "<div class='success'>Migration files at: <code>" + existing["migration_dir"] + "</code></div>"
+    with open("/root/ai-pm-agent/templates/migration.html", "r") as f:
+        page = f.read()
+    page = page.replace("{{analysis_id}}", analysis_id)
+    page = page.replace("{{success_banner}}", success_banner)
+    page = page.replace("{{migration_log}}", migration_log)
+    return HTMLResponse(content=page)
+
+@app.post("/run-migration/{analysis_id}")
+async def run_migration(analysis_id: str, session: str = Cookie(default=None)):
+    if not is_authenticated(session):
+        async def deny():
+            yield event("error", "error", message="Not authenticated.")
+        return StreamingResponse(deny(), media_type="text/event-stream")
+    from database import get_specs, get_generated_app
+    specs = get_specs(analysis_id) or {}
+    app_data = get_generated_app(analysis_id) or {}
+    backend_spec = specs.get("backend_spec", "")
+    app_dir = app_data.get("app_dir", f"/root/ai-pm-agent/generated_apps/mood-tracker")
+
+    async def generate():
+        try:
+            yield event("migration", "running", message="Generating migration files...")
+            from agents.db_migration_agent import run_db_migration_agent
+            result = await asyncio.to_thread(run_db_migration_agent, app_dir, backend_spec)
+            log = "\n".join(result["steps"])
+            if result["errors"]:
+                log += "\nERRORS:\n" + "\n".join(result["errors"])
+            yield event("migration", "done", message="Migration files ready", log=log)
+            from database import save_migration
+            save_migration(analysis_id, app_data.get("app_name","mood-tracker"),
+                result["migration_dir"], "success" if result["success"] else "failed",
+                result["steps"], result["errors"])
+            yield event("complete", "done", message="Done!")
+        except Exception as e:
+            yield event("error", "error", message=str(e))
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.get("/tests/{analysis_id}", response_class=HTMLResponse)
+async def tests_page(analysis_id: str, session: str = Cookie(default=None)):
+    if not is_authenticated(session):
+        return RedirectResponse(url="/login", status_code=302)
+    analysis = get_analysis(analysis_id)
+    if not analysis:
+        return HTMLResponse(content="<h1>Not found</h1>", status_code=404)
+    from database import get_test_results
+    existing = get_test_results(analysis_id)
+    result_banner = ""
+    stats = ""
+    test_output = ""
+    if existing:
+        test_output = existing["output"]
+        passed = existing["passed"]
+        failed = existing["failed"]
+        if failed == 0:
+            result_banner = "<div class='pass'><span style='color:#4caf7d;font-weight:bold'>All tests passing!</span></div>"
+        else:
+            result_banner = "<div class='fail'><span style='color:#ff6666;font-weight:bold'>" + str(failed) + " tests failing</span></div>"
+        stats = "<div class='stats'><div class='stat'><div class='stat-num green'>" + str(passed) + "</div><div class='stat-label'>Passed</div></div><div class='stat'><div class='stat-num red'>" + str(failed) + "</div><div class='stat-label'>Failed</div></div></div>"
+    with open("/root/ai-pm-agent/templates/test_runner.html", "r") as f:
+        page = f.read()
+    page = page.replace("{{analysis_id}}", analysis_id)
+    page = page.replace("{{result_banner}}", result_banner)
+    page = page.replace("{{stats}}", stats)
+    page = page.replace("{{test_output}}", test_output)
+    return HTMLResponse(content=page)
+
+@app.post("/run-tests/{analysis_id}")
+async def run_tests(analysis_id: str, session: str = Cookie(default=None)):
+    if not is_authenticated(session):
+        async def deny():
+            yield event("error", "error", message="Not authenticated.")
+        return StreamingResponse(deny(), media_type="text/event-stream")
+    from database import get_generated_app
+    app_data = get_generated_app(analysis_id) or {}
+    app_dir = app_data.get("app_dir", "/root/ai-pm-agent/generated_apps/mood-tracker")
+    app_name = app_data.get("app_name", "mood-tracker")
+
+    async def generate():
+        try:
+            yield event("tests", "running", message="Running pytest...")
+            from agents.test_runner_agent import run_test_runner_agent
+            result = await asyncio.to_thread(run_test_runner_agent, app_dir)
+            yield event("tests", "done",
+                passed=result["tests_passed"],
+                failed=result["tests_failed"],
+                output=result["output"])
+            from database import save_test_results
+            save_test_results(analysis_id, app_name,
+                result["tests_passed"], result["tests_failed"], result["output"])
+            yield event("complete", "done", message="Tests complete!")
+        except Exception as e:
+            yield event("error", "error", message=str(e))
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 @app.post("/analyse")
 async def analyse(request: Request, session: str = Cookie(default=None)):
