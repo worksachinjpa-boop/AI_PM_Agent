@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>User Research</title>
+<style>
+body{font-family:sans-serif;background:#0f0f0f;color:#e0e0e0;margin:0}
+.header{background:#1a1a2e;padding:24px 40px;display:flex;align-items:center;justify-content:space-between}
+.header h1{color:#7c6fcd;font-size:24px;margin:0}
+.container{max-width:900px;margin:40px auto;padding:0 20px}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:24px;margin-bottom:20px}
+.card h2{color:#7c6fcd;font-size:16px;margin:0 0 12px}
+.card p{font-size:14px;color:#ccc;line-height:1.7;white-space:pre-wrap;margin:0}
+.agent{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:20px;margin-bottom:16px}
+.agent.running{border-color:#7c6fcd}
+.agent.done{border-color:#2a5a3a}
+.atitle{font-weight:600;font-size:15px;margin-bottom:6px}
+.astatus{font-size:12px;color:#888}
+.astatus.running{color:#7c6fcd}
+.astatus.done{color:#4caf7d}
+.btn{background:#7c6fcd;color:white;border:none;padding:12px 24px;border-radius:8px;font-size:15px;cursor:pointer;margin-bottom:24px}
+.btn:disabled{background:#444;cursor:not-allowed}
+a.link{color:#7c6fcd;text-decoration:none;font-size:14px}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>User Research</h1>
+  <a href="/logout" style="color:#888;font-size:13px">Logout</a>
+</div>
+<div class="container">
+  <a class="link" href="/result/{{analysis_id}}">&larr; Back</a>
+  <div style="margin-top:24px">
+    <button class="btn" id="genbtn" onclick="generateResearch()">Generate User Research</button>
+    <div id="agents">
+      <div class="agent" id="card-interview">
+        <div class="atitle">1. Interview Script Generator</div>
+        <div class="astatus" id="status-interview">Waiting</div>
+      </div>
+      <div class="agent" id="card-feedback">
+        <div class="atitle">2. Feedback Synthesizer</div>
+        <div class="astatus" id="status-feedback">Waiting</div>
+      </div>
+      <div class="agent" id="card-persona">
+        <div class="atitle">3. Persona Builder</div>
+        <div class="astatus" id="status-persona">Waiting</div>
+      </div>
+    </div>
+    <div class="card"><h2>Interview Script</h2><p id="interview-content">{{interview}}</p></div>
+    <div class="card"><h2>Feedback Synthesis</h2><p id="feedback-content">{{feedback}}</p></div>
+    <div class="card"><h2>User Personas</h2><p id="persona-content">{{personas}}</p></div>
+  </div>
+</div>
+<script>
+const ANALYSIS_ID = "{{analysis_id}}";
+async function generateResearch() {
+    const btn = document.getElementById("genbtn");
+    btn.disabled = true;
+    btn.textContent = "Generating...";
+    ["interview","feedback","persona"].forEach(function(a) {
+        document.getElementById("card-"+a).className = "agent";
+        document.getElementById("status-"+a).textContent = "Waiting";
+        document.getElementById("status-"+a).className = "astatus";
+    });
+    var res = await fetch("/generate-research/" + ANALYSIS_ID, {method:"POST"});
+    var reader = res.body.getReader();
+    var dec = new TextDecoder();
+    while(true) {
+        var x = await reader.read();
+        if(x.done) break;
+        var lines = dec.decode(x.value).split("\n").filter(function(l){ return l.indexOf("data: ") === 0; });
+        for(var i=0; i<lines.length; i++) {
+            try {
+                var d = JSON.parse(lines[i].slice(6));
+                if(d.agent === "complete") { btn.disabled=false; btn.textContent="Regenerate"; continue; }
+                if(d.agent === "error") { btn.disabled=false; btn.textContent="Generate User Research"; alert(d.message); continue; }
+                var card = document.getElementById("card-"+d.agent);
+                var stat = document.getElementById("status-"+d.agent);
+                if(d.status === "running") { card.className="agent running"; stat.className="astatus running"; stat.textContent=d.message; }
+                if(d.status === "done" && d.result) {
+                    card.className="agent done"; stat.className="astatus done"; stat.textContent="Complete";
+                    if(d.agent === "interview") document.getElementById("interview-content").textContent = d.result;
+                    if(d.agent === "feedback") document.getElementById("feedback-content").textContent = d.result;
+                    if(d.agent === "persona") document.getElementById("persona-content").textContent = d.result;
+                }
+            } catch(e) {}
+        }
+    }
+}
+</script>
+</body>
+</html>

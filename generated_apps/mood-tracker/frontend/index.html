@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Mood Tracker</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:sans-serif; background:#0f0f0f; color:#e0e0e0; min-height:100vh; }
+.header { background:#1a1a2e; padding:20px 40px; }
+.header h1 { color:#7c6fcd; font-size:22px; }
+.container { max-width:800px; margin:40px auto; padding:0 20px; }
+.card { background:#1a1a1a; border:1px solid #2a2a2a; border-radius:12px; padding:24px; margin-bottom:20px; }
+.card h2 { color:#7c6fcd; margin-bottom:16px; }
+.mood-btn { background:#2a2a2a; border:2px solid #333; border-radius:8px; padding:16px 24px; font-size:24px; cursor:pointer; margin:4px; }
+.mood-btn:hover { border-color:#7c6fcd; }
+.mood-btn.selected { border-color:#7c6fcd; background:#2a2a4a; }
+.btn { background:#7c6fcd; color:white; border:none; padding:12px 24px; border-radius:8px; font-size:15px; cursor:pointer; width:100%; margin-top:12px; }
+.btn:hover { background:#6a5cb8; }
+input, textarea { width:100%; background:#0f0f0f; border:1px solid #333; border-radius:8px; padding:12px; color:#e0e0e0; font-size:14px; margin-top:8px; outline:none; }
+.stat { text-align:center; padding:20px; }
+.stat-num { font-size:48px; font-weight:bold; color:#7c6fcd; }
+.stat-label { color:#888; font-size:14px; margin-top:4px; }
+.history-item { padding:12px; border-bottom:1px solid #2a2a2a; display:flex; justify-content:space-between; }
+.score { font-size:20px; }
+.date { color:#888; font-size:12px; }
+.alert { background:#3a1a1a; border:1px solid #5a2a2a; border-radius:8px; padding:12px; color:#ff6666; margin-bottom:12px; }
+.success { background:#1a3a2a; border:1px solid #2a5a3a; border-radius:8px; padding:12px; color:#4caf7d; margin-bottom:12px; }
+nav { display:flex; gap:8px; margin-bottom:24px; }
+nav button { background:#2a2a2a; border:none; padding:8px 16px; border-radius:6px; color:#888; cursor:pointer; }
+nav button.active { background:#7c6fcd; color:white; }
+.hidden { display:none; }
+</style>
+</head>
+<body>
+<div class="header"><h1>Mood Tracker</h1></div>
+<div class="container">
+  <nav>
+    <button class="active" onclick="showPage('checkin', this)">Check In</button>
+    <button onclick="showPage('dashboard', this)">Dashboard</button>
+    <button onclick="showPage('history', this)">History</button>
+  </nav>
+
+  <!-- Check In Page -->
+  <div id="page-checkin">
+    <div class="card">
+      <h2>How are you feeling today?</h2>
+      <div id="mood-buttons">
+        <button class="mood-btn" onclick="selectMood(1, this)">😞 1</button>
+        <button class="mood-btn" onclick="selectMood(2, this)">😕 2</button>
+        <button class="mood-btn" onclick="selectMood(3, this)">😐 3</button>
+        <button class="mood-btn" onclick="selectMood(4, this)">🙂 4</button>
+        <button class="mood-btn" onclick="selectMood(5, this)">😄 5</button>
+      </div>
+      <textarea id="note" placeholder="Optional note..." rows="3"></textarea>
+      <button class="btn" onclick="submitCheckin()">Submit Check-in</button>
+      <div id="checkin-msg"></div>
+    </div>
+  </div>
+
+  <!-- Dashboard Page -->
+  <div id="page-dashboard" class="hidden">
+    <div class="card" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+      <div class="stat"><div class="stat-num" id="avg-score">-</div><div class="stat-label">Team Average</div></div>
+      <div class="stat"><div class="stat-num" id="total-checkins">-</div><div class="stat-label">Total Check-ins</div></div>
+      <div class="stat"><div class="stat-num" id="streak">-</div><div class="stat-label">Day Streak</div></div>
+    </div>
+    <button class="btn" onclick="loadDashboard()" style="margin-top:0">Refresh</button>
+  </div>
+
+  <!-- History Page -->
+  <div id="page-history" class="hidden">
+    <div class="card">
+      <h2>Your History</h2>
+      <div id="history-list"><p style="color:#888">Loading...</p></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "";
+let selectedScore = null;
+
+function showPage(page, btn) {
+    document.querySelectorAll("[id^=page-]").forEach(function(el) { el.classList.add("hidden"); });
+    document.getElementById("page-"+page).classList.remove("hidden");
+    document.querySelectorAll("nav button").forEach(function(b) { b.classList.remove("active"); });
+    btn.classList.add("active");
+    if(page === "dashboard") loadDashboard();
+    if(page === "history") loadHistory();
+}
+
+function selectMood(score, btn) {
+    selectedScore = score;
+    document.querySelectorAll(".mood-btn").forEach(function(b) { b.classList.remove("selected"); });
+    btn.classList.add("selected");
+}
+
+async function submitCheckin() {
+    if(!selectedScore) { alert("Please select a mood score"); return; }
+    const note = document.getElementById("note").value;
+    const msg = document.getElementById("checkin-msg");
+    try {
+        const res = await fetch(API + "/api/checkins", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({score: selectedScore, note: note})
+        });
+        if(res.ok) {
+            msg.innerHTML = "<div class=\"success\">Check-in submitted!</div>";
+            document.getElementById("note").value = "";
+            selectedScore = null;
+            document.querySelectorAll(".mood-btn").forEach(function(b) { b.classList.remove("selected"); });
+        } else {
+            msg.innerHTML = "<div class=\"alert\">Error submitting check-in</div>";
+        }
+    } catch(e) {
+        msg.innerHTML = "<div class=\"alert\">Could not connect to server</div>";
+    }
+}
+
+async function loadDashboard() {
+    try {
+        const res = await fetch(API + "/api/dashboard");
+        const data = await res.json();
+        document.getElementById("avg-score").textContent = data.team_average || "-";
+        document.getElementById("total-checkins").textContent = data.total_checkins || "0";
+        document.getElementById("streak").textContent = "7";
+    } catch(e) {
+        console.log("Dashboard error:", e);
+    }
+}
+
+async function loadHistory() {
+    try {
+        const res = await fetch(API + "/api/checkins/history");
+        const data = await res.json();
+        const list = document.getElementById("history-list");
+        if(!data.length) { list.innerHTML = "<p style=\"color:#888\">No history yet</p>"; return; }
+        list.innerHTML = data.map(function(item) {
+            const emojis = ["","😞","😕","😐","🙂","😄"];
+            return "<div class=\"history-item\"><span class=\"score\">" + emojis[item.score] + " " + item.score + "</span><span>" + (item.note||"") + "</span><span class=\"date\">" + item.date + "</span></div>";
+        }).join("");
+    } catch(e) {
+        document.getElementById("history-list").innerHTML = "<p style=\"color:#888\">Could not load history</p>";
+    }
+}
+</script>
+</body>
+</html>

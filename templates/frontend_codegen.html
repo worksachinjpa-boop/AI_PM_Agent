@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Frontend Generator</title>
+<style>
+body{font-family:sans-serif;background:#0f0f0f;color:#e0e0e0;margin:0}
+.header{background:#1a1a2e;padding:24px 40px;display:flex;align-items:center;justify-content:space-between}
+.header h1{color:#7c6fcd;font-size:24px;margin:0}
+.container{max-width:900px;margin:40px auto;padding:0 20px}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:24px;margin-bottom:20px}
+.card h2{color:#7c6fcd;font-size:16px;margin:0 0 12px}
+.agent{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:20px;margin-bottom:16px}
+.agent.running{border-color:#7c6fcd}
+.agent.done{border-color:#2a5a3a}
+.atitle{font-weight:600;font-size:15px;margin-bottom:6px}
+.astatus{font-size:12px;color:#888}
+.astatus.running{color:#7c6fcd}
+.astatus.done{color:#4caf7d}
+.btn{background:#7c6fcd;color:white;border:none;padding:12px 24px;border-radius:8px;font-size:15px;cursor:pointer;margin-bottom:24px;margin-right:10px}
+.btn:disabled{background:#444;cursor:not-allowed}
+.btn-green{background:#2a5a3a}
+a.link{color:#7c6fcd;text-decoration:none;font-size:14px}
+.info{background:#1a2a3a;border:1px solid #2a3a5a;border-radius:10px;padding:16px;margin-bottom:20px;color:#4a9eff;font-size:14px}
+.success{background:#1a3a2a;border:1px solid #2a5a3a;border-radius:10px;padding:16px;margin-bottom:20px;color:#4caf7d;font-size:14px}
+input{background:#0f0f0f;border:1px solid #333;border-radius:8px;padding:10px 14px;color:#e0e0e0;font-size:14px;width:300px;outline:none}
+pre{background:#0a0a0a;padding:16px;border-radius:8px;font-size:12px;color:#4aff9f;max-height:400px;overflow-y:auto;white-space:pre-wrap}
+.file-tag{background:#1a3a2a;color:#4aff9f;padding:3px 8px;border-radius:4px;font-size:12px;margin:2px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Frontend Code Generator</h1>
+  <a href="/logout" style="color:#888;font-size:13px">Logout</a>
+</div>
+<div class="container">
+  <a class="link" href="/result/{{analysis_id}}">&larr; Back</a>
+  <div style="margin-top:24px">
+    <div class="info">Generates a complete single-file HTML frontend that connects to your backend API.</div>
+    {{success_banner}}
+    <div style="margin-bottom:16px">
+      <label style="color:#888;font-size:13px;display:block;margin-bottom:6px">App name</label>
+      <input id="appname" type="text" value="{{app_name}}" placeholder="my-mood-tracker"/>
+    </div>
+    <button class="btn" id="genbtn" onclick="generateFrontend()">Generate Frontend</button>
+    {{preview_btn}}
+    <div id="agents">
+      <div class="agent" id="card-frontend">
+        <div class="atitle">Frontend Code Generator</div>
+        <div class="astatus" id="status-frontend">Waiting</div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Generated Files</h2>
+      <div id="files-list">{{files_list}}</div>
+      <pre id="code-preview">{{code_preview}}</pre>
+    </div>
+  </div>
+</div>
+<script>
+const ANALYSIS_ID = "{{analysis_id}}";
+async function generateFrontend() {
+    const btn = document.getElementById("genbtn");
+    const appname = document.getElementById("appname").value.trim();
+    if(!appname) { alert("Please enter app name"); return; }
+    btn.disabled = true;
+    btn.textContent = "Generating...";
+    document.getElementById("card-frontend").className = "agent";
+    document.getElementById("status-frontend").textContent = "Waiting";
+    document.getElementById("status-frontend").className = "astatus";
+    document.getElementById("files-list").innerHTML = "";
+    document.getElementById("code-preview").textContent = "";
+    var res = await fetch("/generate-frontend/" + ANALYSIS_ID + "?app_name=" + encodeURIComponent(appname), {method:"POST"});
+    var reader = res.body.getReader();
+    var dec = new TextDecoder();
+    while(true) {
+        var x = await reader.read();
+        if(x.done) break;
+        var lines = dec.decode(x.value).split("\n").filter(function(l){ return l.indexOf("data: ") === 0; });
+        for(var i=0; i<lines.length; i++) {
+            try {
+                var d = JSON.parse(lines[i].slice(6));
+                if(d.agent === "complete") {
+                    btn.disabled=false;
+                    btn.textContent="Regenerate";
+                    if(d.files) {
+                        var list = document.getElementById("files-list");
+                        list.innerHTML = "<p style='color:#4caf7d;font-size:13px;margin-bottom:8px'>Generated " + d.files.length + " files:</p>";
+                        d.files.forEach(function(f) {
+                            list.innerHTML += "<span class='file-tag'>" + f + "</span>";
+                        });
+                    }
+                    if(d.preview_url) {
+                        var pb = document.getElementById("preview-btn");
+                        if(pb) { pb.style.display="inline-block"; pb.href=d.preview_url; }
+                    }
+                    continue;
+                }
+                if(d.agent === "error") { btn.disabled=false; btn.textContent="Generate Frontend"; alert(d.message); continue; }
+                var card = document.getElementById("card-"+d.agent);
+                var stat = document.getElementById("status-"+d.agent);
+                if(d.status === "running") { card.className="agent running"; stat.className="astatus running"; stat.textContent=d.message; }
+                if(d.status === "done") {
+                    card.className="agent done"; stat.className="astatus done"; stat.textContent="Complete";
+                    if(d.preview) document.getElementById("code-preview").textContent = d.preview;
+                }
+            } catch(e) {}
+        }
+    }
+}
+</script>
+</body>
+</html>

@@ -131,6 +131,8 @@ async def result(analysis_id: str, session: str = Cookie(default=None)):
     html += "<a href=\"/specs/" + analysis_id + "\" style=\"background:#3a1a5a;color:#aa4aff;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block\">Run Parallel Specs</a>"
     html += "<a href=\"/architecture/" + analysis_id + "\" style=\"background:#1a3a2a;color:#4aff9f;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block\">System Architecture</a>"
     html += "<a href=\"/codegen/" + analysis_id + "\" style=\"background:#0a2a1a;color:#00ff88;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block;border:1px solid #00ff88\">Generate Code</a>"
+    html += "<a href=\"/deploy/" + analysis_id + "\" style=\"background:#2a0a0a;color:#ff4444;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block;border:1px solid #ff4444\">Deploy to Production</a>"
+    html += "<a href=\"/frontend-codegen/" + analysis_id + "\" style=\"background:#0a1a3a;color:#4a9eff;padding:12px 24px;border-radius:8px;font-size:15px;text-decoration:none;margin-right:10px;margin-bottom:10px;display:inline-block;border:1px solid #4a9eff\">Generate Frontend</a>"
     html += "</div></div></div></body></html>"
     return HTMLResponse(content=html)
 
@@ -146,55 +148,13 @@ async def research_page(analysis_id: str, session: str = Cookie(default=None)):
     interview = existing["interview_script"] if existing else ""
     feedback = existing["feedback_synthesis"] if existing else ""
     personas = existing["personas"] if existing else ""
-    html = "<!DOCTYPE html><html><head><title>User Research</title>" + base_style() + "</head>"
-    html += "<body><div class=\"header\"><h1>User Research</h1><a href=\"/logout\" style=\"color:#888;font-size:13px\">Logout</a></div>"
-    html += "<div class=\"container\"><a class=\"link\" href=\"/result/" + analysis_id + "\">&larr; Back</a><div style=\"margin-top:24px\">"
-    html += "<button class=\"btn\" id=\"genbtn\" onclick=\"generateResearch('" + analysis_id + "')\">Generate User Research</button>"
-    html += "<div id=\"agents\">"
-    html += "<div class=\"agent\" id=\"card-interview\"><div class=\"atitle\">1. Interview Script Generator</div><div class=\"astatus\" id=\"status-interview\">Waiting</div></div>"
-    html += "<div class=\"agent\" id=\"card-feedback\"><div class=\"atitle\">2. Feedback Synthesizer</div><div class=\"astatus\" id=\"status-feedback\">Waiting</div></div>"
-    html += "<div class=\"agent\" id=\"card-persona\"><div class=\"atitle\">3. Persona Builder</div><div class=\"astatus\" id=\"status-persona\">Waiting</div></div>"
-    html += "</div>"
-    html += "<div class=\"card\"><h2>Interview Script</h2><p id=\"interview-content\">" + interview + "</p></div>"
-    html += "<div class=\"card\"><h2>Feedback Synthesis</h2><p id=\"feedback-content\">" + feedback + "</p></div>"
-    html += "<div class=\"card\"><h2>User Personas</h2><p id=\"persona-content\">" + personas + "</p></div>"
-    html += "</div></div>"
-    html += """<script>
-async function generateResearch(id) {
-    const btn = document.getElementById("genbtn");
-    btn.disabled = true; btn.textContent = "Generating...";
-    ["interview","feedback","persona"].forEach(a => {
-        document.getElementById("card-"+a).className = "agent";
-        document.getElementById("status-"+a).textContent = "Waiting";
-        document.getElementById("status-"+a).className = "astatus";
-    });
-    const res = await fetch("/generate-research/"+id, {method:"POST"});
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    while(true) {
-        const {done, value} = await reader.read();
-        if(done) break;
-        const lines = dec.decode(value).split("\n").filter(l => l.startsWith("data: "));
-        for(const line of lines) {
-            try {
-                const d = JSON.parse(line.slice(6));
-                if(d.agent === "complete") { btn.disabled=false; btn.textContent="Regenerate Research"; continue; }
-                if(d.agent === "error") { btn.disabled=false; btn.textContent="Generate User Research"; alert(d.message); continue; }
-                const card = document.getElementById("card-"+d.agent);
-                const status = document.getElementById("status-"+d.agent);
-                if(d.status === "running") { card.className="agent running"; status.className="astatus running"; status.textContent=d.message; }
-                if(d.status === "done" && d.result) {
-                    card.className="agent done"; status.className="astatus done"; status.textContent="Complete";
-                    if(d.agent === "interview") document.getElementById("interview-content").textContent = d.result;
-                    if(d.agent === "feedback") document.getElementById("feedback-content").textContent = d.result;
-                    if(d.agent === "persona") document.getElementById("persona-content").textContent = d.result;
-                }
-            } catch(e) {}
-        }
-    }
-}
-</script></body></html>"""
-    return HTMLResponse(content=html)
+    with open("/root/ai-pm-agent/templates/research.html", "r") as f:
+        page = f.read()
+    page = page.replace("{{analysis_id}}", analysis_id)
+    page = page.replace("{{interview}}", interview)
+    page = page.replace("{{feedback}}", feedback)
+    page = page.replace("{{personas}}", personas)
+    return HTMLResponse(content=page)
 
 @app.post("/generate-research/{analysis_id}")
 async def generate_research(analysis_id: str, session: str = Cookie(default=None)):
@@ -862,6 +822,244 @@ async def generate_code(analysis_id: str, app_name: str, session: str = Cookie(d
             yield event("error", "error", message=str(e))
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.get("/deploy/{analysis_id}", response_class=HTMLResponse)
+async def deploy_page(analysis_id: str, session: str = Cookie(default=None)):
+    if not is_authenticated(session):
+        return RedirectResponse(url="/login", status_code=302)
+    analysis = get_analysis(analysis_id)
+    if not analysis:
+        return HTMLResponse(content="<h1>Not found</h1>", status_code=404)
+    from database import get_deployment, get_generated_app
+    existing = get_deployment(analysis_id)
+    app_data = get_generated_app(analysis_id)
+    url = existing["url"] if existing else ""
+    status = existing["status"] if existing else ""
+    steps = existing["steps"] if existing else "[]"
+    app_name = app_data["app_name"] if app_data else ""
+    app_dir = app_data["app_dir"] if app_data else ""
+    has_code = app_data is not None
+    warning = "" if has_code else "<div style=\"background:#3a2a1a;border:1px solid #5a3a1a;border-radius:8px;padding:12px;margin-bottom:20px;color:#ffaa44;font-size:14px\">Generate code first. <a href=\"/codegen/" + analysis_id + "\" style=\"color:#ffaa44\">Generate Code</a></div>"
+    live_banner = ""
+    if status == "success" and url:
+        live_banner = "<div style=\"background:#1a3a2a;border:1px solid #2a5a3a;border-radius:10px;padding:16px;margin-bottom:20px\">"
+        live_banner += "<p style=\"color:#4caf7d;font-size:16px;font-weight:bold;margin:0 0 8px\">App is LIVE!</p>"
+        live_banner += "<a href=\"" + url + "\" target=\"_blank\" style=\"color:#4aff9f;font-size:14px\">" + url + "</a>"
+        live_banner += "</div>"
+    html = "<!DOCTYPE html><html><head><title>Deploy</title>" + base_style() + "</head>"
+    html += "<body><div class=\"header\"><h1>Deployment Agent</h1><a href=\"/logout\" style=\"color:#888;font-size:13px\">Logout</a></div>"
+    html += "<div class=\"container\"><a class=\"link\" href=\"/codegen/" + analysis_id + "\">&larr; Back to Code</a><div style=\"margin-top:24px\">"
+    html += warning
+    html += live_banner
+    html += "<div style=\"background:#1a2a1a;border:1px solid #2a4a2a;border-radius:10px;padding:16px;margin-bottom:20px\">"
+    html += "<p style=\"color:#4aff9f;font-size:14px;margin:0\">Deployment Agent → Docker build → Start containers → Health check → Monitoring Agent</p></div>"
+    html += "<button class=\"btn\" id=\"depbtn\" onclick=\"deployApp('" + analysis_id + "', '" + app_name + "', '" + app_dir + "')\">Deploy to Production</button>"
+    if status == "success" and url:
+        html += " <button class=\"btn\" style=\"background:#2a2a4a\" onclick=\"monitorApp('" + analysis_id + "', '" + url + "', '" + app_name + "')\">Run Health Check</button>"
+    html += "<div id=\"agents\" style=\"margin-top:20px\">"
+    html += "<div class=\"agent\" id=\"card-deploy\"><div class=\"atitle\">1. Deployment Agent</div><div class=\"astatus\" id=\"status-deploy\">Waiting</div></div>"
+    html += "<div class=\"agent\" id=\"card-monitor\"><div class=\"atitle\">2. Monitoring Agent</div><div class=\"astatus\" id=\"status-monitor\">Runs after deployment</div></div>"
+    html += "</div>"
+    html += "<div class=\"card\" style=\"margin-top:20px\">"
+    html += "<h2>Deployment Log</h2>"
+    html += "<pre id=\"deploy-log\" style=\"background:#0a0a0a;padding:16px;border-radius:8px;font-size:12px;color:#4aff9f;max-height:400px;overflow-y:auto;white-space:pre-wrap\"></pre>"
+    html += "</div>"
+    html += "<div class=\"card\">"
+    html += "<h2>Monitoring Report</h2>"
+    html += "<pre id=\"monitor-report\" style=\"background:#0a0a0a;padding:16px;border-radius:8px;font-size:12px;color:#ccc;max-height:300px;overflow-y:auto;white-space:pre-wrap\"></pre>"
+    html += "</div>"
+    html += "</div></div>"
+    html += """<script>
+async function deployApp(id, appName, appDir) {
+    const btn = document.getElementById("depbtn");
+    btn.disabled = true; btn.textContent = "Deploying...";
+    document.getElementById("deploy-log").textContent = "Starting deployment...\n";
+    ["deploy","monitor"].forEach(a => {
+        document.getElementById("card-"+a).className = "agent";
+        document.getElementById("status-"+a).textContent = "Waiting";
+        document.getElementById("status-"+a).className = "astatus";
+    });
+    const res = await fetch("/run-deploy/"+id, {method:"POST"});
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    while(true) {
+        const {done, value} = await reader.read();
+        if(done) break;
+        const lines = dec.decode(value).split("\n").filter(l => l.startsWith("data: "));
+        for(const line of lines) {
+            try {
+                const d = JSON.parse(line.slice(6));
+                if(d.agent === "complete") {
+                    btn.disabled=false; btn.textContent="Redeploy";
+                    if(d.url) {
+                        const banner = document.createElement("div");
+                        banner.style = "background:#1a3a2a;border:1px solid #2a5a3a;border-radius:10px;padding:16px;margin-bottom:20px";
+                        banner.innerHTML = "<p style=\"color:#4caf7d;font-size:16px;font-weight:bold;margin:0 0 8px\">App is LIVE!</p><a href=\""+d.url+"\" target=\"_blank\" style=\"color:#4aff9f\">"+d.url+"</a>";
+                        document.querySelector(".container div").prepend(banner);
+                    }
+                    continue;
+                }
+                if(d.agent === "error") { btn.disabled=false; btn.textContent="Retry Deploy"; alert(d.message); continue; }
+                const card = document.getElementById("card-"+d.agent);
+                const status = document.getElementById("status-"+d.agent);
+                if(d.status === "running") { card.className="agent running"; status.className="astatus running"; status.textContent=d.message; }
+                if(d.status === "done") {
+                    card.className="agent done"; status.className="astatus done"; status.textContent=d.message||"Complete";
+                    if(d.log) document.getElementById("deploy-log").textContent += d.log + "\n";
+                    if(d.report) document.getElementById("monitor-report").textContent = d.report;
+                }
+            } catch(e) {}
+        }
+    }
+}
+async function monitorApp(id, url, appName) {
+    const res = await fetch("/run-monitor/"+id+"?url="+encodeURIComponent(url)+"&app_name="+encodeURIComponent(appName), {method:"POST"});
+    const data = await res.json();
+    document.getElementById("monitor-report").textContent = data.report;
+}
+</script></body></html>"""
+    return HTMLResponse(content=html)
+
+@app.post("/run-deploy/{analysis_id}")
+async def run_deploy(analysis_id: str, session: str = Cookie(default=None)):
+    if not is_authenticated(session):
+        async def deny():
+            yield event("error", "error", message="Not authenticated.")
+        return StreamingResponse(deny(), media_type="text/event-stream")
+    from database import get_generated_app
+    app_data = get_generated_app(analysis_id)
+    if not app_data:
+        async def no_code():
+            yield event("error", "error", message="No generated code found. Generate code first.")
+        return StreamingResponse(no_code(), media_type="text/event-stream")
+    app_name = app_data["app_name"]
+    app_dir = app_data["app_dir"]
+
+    async def generate():
+        try:
+            yield event("deploy", "running", message="Building and deploying...")
+            from agents.deployment_agent import run_deployment_agent
+            result = await asyncio.to_thread(run_deployment_agent, app_name, app_dir)
+            log_text = "\n".join(result["steps"])
+            if result["errors"]:
+                log_text += "\nERRORS:\n" + "\n".join(result["errors"])
+            yield event("deploy", "done", message="Deployment complete" if result["success"] else "Deployment failed", log=log_text)
+
+            if result["success"]:
+                yield event("monitor", "running", message="Running health check...")
+                from agents.monitoring_agent import run_monitoring_agent
+                monitor = await asyncio.to_thread(run_monitoring_agent, result["url"], app_name)
+                yield event("monitor", "done", message="Health check complete", report=monitor["report"])
+                from database import save_deployment
+                save_deployment(analysis_id, app_name, result["url"],
+                    "success" if result["success"] else "failed",
+                    result["steps"], result["errors"])
+                yield event("complete", "done", url=result["url"], message="Live!")
+            else:
+                yield event("error", "error", message="Deployment failed: " + str(result["errors"]))
+        except Exception as e:
+            yield event("error", "error", message=str(e))
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+@app.post("/run-monitor/{analysis_id}")
+async def run_monitor(analysis_id: str, url: str, app_name: str, session: str = Cookie(default=None)):
+    if not is_authenticated(session):
+        return {"error": "Not authenticated"}
+    from agents.monitoring_agent import run_monitoring_agent
+    result = await asyncio.to_thread(run_monitoring_agent, url, app_name)
+    return result
+
+
+@app.get("/frontend-codegen/{analysis_id}", response_class=HTMLResponse)
+async def frontend_codegen_page(analysis_id: str, session: str = Cookie(default=None)):
+    if not is_authenticated(session):
+        return RedirectResponse(url="/login", status_code=302)
+    analysis = get_analysis(analysis_id)
+    if not analysis:
+        return HTMLResponse(content="<h1>Not found</h1>", status_code=404)
+    from database import get_frontend_code, get_generated_app
+    existing = get_frontend_code(analysis_id)
+    backend = get_generated_app(analysis_id)
+    app_name = backend["app_name"] if backend else "my-app"
+    files_list = ""
+    code_preview = ""
+    success_banner = ""
+    preview_btn = ""
+    if existing:
+        import json
+        files = json.loads(existing["files_generated"])
+        files_list = "<p style='color:#4caf7d;font-size:13px;margin-bottom:8px'>Generated " + str(len(files)) + " files:</p>"
+        for f in files:
+            files_list += "<span class='file-tag'>" + f + "</span>"
+        frontend_dir = existing["frontend_dir"]
+        index_path = frontend_dir + "/index.html"
+        if os.path.exists(index_path):
+            with open(index_path, "r") as f:
+                code_preview = f.read()[:500] + "..."
+        success_banner = "<div class='success'>Frontend generated at: <code>" + existing["frontend_dir"] + "</code></div>"
+        preview_btn = "<a id='preview-btn' href='/preview/" + analysis_id + "' target='_blank' class='btn btn-green' style='text-decoration:none'>Preview App</a>"
+    with open("/root/ai-pm-agent/templates/frontend_codegen.html", "r") as f:
+        page = f.read()
+    page = page.replace("{{analysis_id}}", analysis_id)
+    page = page.replace("{{app_name}}", app_name)
+    page = page.replace("{{files_list}}", files_list)
+    page = page.replace("{{code_preview}}", code_preview)
+    page = page.replace("{{success_banner}}", success_banner)
+    page = page.replace("{{preview_btn}}", preview_btn)
+    return HTMLResponse(content=page)
+
+@app.post("/generate-frontend/{analysis_id}")
+async def generate_frontend(analysis_id: str, app_name: str, session: str = Cookie(default=None)):
+    if not is_authenticated(session):
+        async def deny():
+            yield event("error", "error", message="Not authenticated.")
+        return StreamingResponse(deny(), media_type="text/event-stream")
+    analysis = get_analysis(analysis_id)
+    if not analysis:
+        async def not_found():
+            yield event("error", "error", message="Analysis not found.")
+        return StreamingResponse(not_found(), media_type="text/event-stream")
+    from database import get_specs, get_generated_app
+    specs = get_specs(analysis_id) or {}
+    backend_data = get_generated_app(analysis_id) or {}
+    frontend_spec = specs.get("frontend_spec", "")
+    backend_spec = specs.get("backend_spec", "")
+
+    async def generate():
+        try:
+            yield event("frontend", "running", message="Writing frontend code...")
+            from agents.frontend_code_generator import run_frontend_code_generator, parse_frontend_files, save_frontend_files
+            raw = await asyncio.to_thread(run_frontend_code_generator, frontend_spec, app_name, backend_spec)
+            files = parse_frontend_files(raw)
+            if not files:
+                files = {"index.html": raw}
+            frontend_dir = save_frontend_files(files, app_name)
+            preview = list(files.values())[0][:300] + "..."
+            yield event("frontend", "done", message=f"Generated {len(files)} files", preview=preview)
+            from database import save_frontend_code
+            save_frontend_code(analysis_id, app_name, frontend_dir, list(files.keys()))
+            preview_url = f"/preview/{analysis_id}"
+            yield event("complete", "done", files=list(files.keys()), preview_url=preview_url, message="Frontend generated!")
+        except Exception as e:
+            yield event("error", "error", message=str(e))
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+@app.get("/preview/{analysis_id}", response_class=HTMLResponse)
+async def preview_app(analysis_id: str, session: str = Cookie(default=None)):
+    if not is_authenticated(session):
+        return RedirectResponse(url="/login", status_code=302)
+    from database import get_frontend_code
+    existing = get_frontend_code(analysis_id)
+    if not existing:
+        return HTMLResponse(content="<h1>No frontend generated yet</h1>", status_code=404)
+    index_path = existing["frontend_dir"] + "/index.html"
+    if not os.path.exists(index_path):
+        return HTMLResponse(content="<h1>Frontend file not found</h1>", status_code=404)
+    with open(index_path, "r") as f:
+        return HTMLResponse(content=f.read())
 
 @app.post("/analyse")
 async def analyse(request: Request, session: str = Cookie(default=None)):

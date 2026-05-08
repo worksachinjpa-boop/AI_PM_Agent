@@ -271,3 +271,80 @@ def get_generated_app(analysis_id):
     except:
         conn.close()
     return None
+
+def save_deployment(analysis_id, app_name, url, status, steps, errors):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS deployments (
+            id TEXT PRIMARY KEY,
+            analysis_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            app_name TEXT,
+            url TEXT,
+            status TEXT,
+            steps TEXT,
+            errors TEXT
+        )
+    """)
+    import json
+    dep_id = str(uuid.uuid4())[:8]
+    cursor.execute("""
+        INSERT INTO deployments (id, analysis_id, app_name, url, status, steps, errors)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (dep_id, analysis_id, app_name, url, status,
+          json.dumps(steps), json.dumps(errors)))
+    conn.commit()
+    conn.close()
+    return dep_id
+
+def get_deployment(analysis_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM deployments WHERE analysis_id = ? ORDER BY created_at DESC LIMIT 1", (analysis_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+    except:
+        conn.close()
+    return None
+
+def save_frontend_code(analysis_id, app_name, frontend_dir, files_generated):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS frontend_code (
+            id TEXT PRIMARY KEY,
+            analysis_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            app_name TEXT,
+            frontend_dir TEXT,
+            files_generated TEXT
+        )
+    """)
+    import json
+    code_id = str(uuid.uuid4())[:8]
+    cursor.execute("""
+        INSERT INTO frontend_code (id, analysis_id, app_name, frontend_dir, files_generated)
+        VALUES (?, ?, ?, ?, ?)
+    """, (code_id, analysis_id, app_name, frontend_dir, json.dumps(files_generated)))
+    conn.commit()
+    conn.close()
+    return code_id
+
+def get_frontend_code(analysis_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM frontend_code WHERE analysis_id = ? ORDER BY created_at DESC LIMIT 1", (analysis_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+    except:
+        conn.close()
+    return None
